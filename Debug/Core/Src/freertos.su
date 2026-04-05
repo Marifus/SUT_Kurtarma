@@ -1,0 +1,6 @@
+../Core/Src/freertos.c:110:6:vApplicationGetIdleTaskMemory	24	static
+../Core/Src/freertos.c:124:6:MX_FREERTOS_Init	136	static
+../Core/Src/freertos.c:180:6:StartDefaultTask	16	static
+../Core/Src/freertos.c:198:6:PrintUART	40	static
+../Core/Src/freertos.c:218:6:PullSensorData	16	static
+../Core/Src/freertos.c:254:6:AlgorithmSwitch	16	static
