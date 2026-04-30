@@ -103,7 +103,7 @@ volatile uint8_t SIT_Task_Active = 0;
 volatile uint8_t SUT_Task_Active = 0;
 volatile uint16_t Task_Status_Bits = 0x0000;
 
-
+uint8_t hata_kodu = 0;
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -625,6 +625,7 @@ void ReceiveUARTData(void *argument)
   for(;;)
   {
 	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
+	  hata_kodu = 1;
 	  rx_length = sizeof(rx_buffer) - __HAL_DMA_GET_COUNTER(huart2.hdmarx);
 
 	  for (int i = 0; i<rx_length; i++)
@@ -637,21 +638,23 @@ void ReceiveUARTData(void *argument)
 
 	  }
 
+	  header_index = 0;
+	  hata_kodu = 2;
 
 	  if (rx_length >= header_index+5 && rx_buffer[header_index] == 0xAA)
 	  {
+		  hata_kodu = 3;
 		  if (rx_buffer[header_index+3] == 0x0D && rx_buffer[header_index+4] == 0x0A)
 		  {
+			  hata_kodu = 4;
 			  if (rx_buffer[header_index+1] == 0x20 && rx_buffer[header_index+2] == 0x8C)
 			  {
-				  osDelay(1000);
 				  SIT_Task_Active = 1;
 				  SUT_Task_Active = 0;
 			  }
 
 			  else if (rx_buffer[header_index+1] == 0x22 && rx_buffer[header_index+2] == 0x8E)
 			  {
-				  osDelay(1000);
 				  SIT_Task_Active = 0;
 				  SUT_Task_Active = 1;
 			  }
