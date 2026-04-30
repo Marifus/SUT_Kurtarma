@@ -664,13 +664,15 @@ void ReceiveUARTData(void *argument)
 		  }
 	  }
 
-		  else if ((SUT_Task_Active == 1) && rx_buffer[header_index] == 0xAB)
-		  {
-			  SUTDataRead(rx_buffer, rx_length, header_index);
-		  }
+	  else if ((SUT_Task_Active == 1) && rx_buffer[header_index] == 0xAB)
+	  {
+		  SUTDataRead(rx_buffer, rx_length, header_index);
 	  }
 
-  HAL_UARTEx_ReceiveToIdle_DMA(&huart2, rx_buffer, sizeof(rx_buffer));
+	  HAL_UARTEx_ReceiveToIdle_DMA(&huart2, rx_buffer, sizeof(rx_buffer));
+  }
+
+
 
   /* USER CODE END ReceiveUARTData */
 }
