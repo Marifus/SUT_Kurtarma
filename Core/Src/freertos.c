@@ -82,6 +82,9 @@ float previous_euler_y = 0.0f;
 float previous_euler_z = 0.0f;
 float previous_pressure = 0.0f;
 
+uint8_t rx_buffer[100];
+uint16_t rx_length;
+uint16_t header_index = 0;
 
 uint32_t current_time_ms = 0;
 uint32_t prev_time_ms = 0;
@@ -616,9 +619,6 @@ void AlgorithmSwitch(void *argument)
 void ReceiveUARTData(void *argument)
 {
   /* USER CODE BEGIN ReceiveUARTData */
-	uint8_t rx_buffer[100];
-	uint16_t rx_length;
-	uint16_t header_index = 0;
 
 	HAL_UARTEx_ReceiveToIdle_DMA(&huart2, rx_buffer, sizeof(rx_buffer));
   /* Infinite loop */
