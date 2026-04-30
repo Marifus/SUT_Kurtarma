@@ -19,13 +19,13 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "dma.h"
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "bmp180_for_stm32_hal.h"
 #include "stdio.h"
 #include "math.h"
 /* USER CODE END Includes */
@@ -56,90 +56,12 @@ void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
-
-float CalculateAltitude(const float* temp, const uint32_t* press, const uint32_t* ground_press) //irtifa hesaplayan fonksiyon
-{
-	if(*press == 0) return 0; // Sıfıra bölmemek için koruma.
-
-	float alt = (powf((*ground_press / (float)*press), 0.190263f) - 1.0f) * (*temp + 273.15f) / 0.0065f;
-	return alt;
-}
-
-void DeployDrogueParachute()
-{
-	//İlk paraşütü açan fonksiyon
-	HAL_GPIO_WritePin(DROGUE_PARACHUTE_GPIO_Port, DROGUE_PARACHUTE_Pin, 1);
-}
-
-void DeployMainParachute()
-{
-	//İkinci paraşütü açan fonksiyon
-	HAL_GPIO_WritePin(MAIN_PARACHUTE_GPIO_Port, MAIN_PARACHUTE_Pin, 1);
-}
-
-void DetermineGroundPressure(uint32_t* ground_press, uint32_t counter) //Referans basıncını almak için fonksiyon
-{
-	uint32_t press = 0;
-	uint32_t sum = 0;
-	float temp = 0.0f; //temp değerini kullanmıyoruz ama UpdateSensorData() fonksiyonunu nullptr ile çalışacak şekilde güncellemeye üşendim.
-
-	for(int i=0; i<counter; i++)
-	{
-		UpdateSensorData(&temp, &press);
-		sum += press;
-		HAL_Delay(15); //Sensör verisi 13.5 ms'de bir güncelleniyor ve bunun için bekliyoruz.
-	}
-
-	*ground_press = (uint32_t)sum / counter;
-}
-
-float GetDerivative(const float* current_value, const uint32_t* current_time_ms, const float* prev_value, const uint32_t* prev_time_ms) //İRtifadan hıza, hızdan ivmeye geçmek için türev hesaplama fonksiyonu
-{
-	float delta_time = (*current_time_ms - *prev_time_ms) / 1000.0f; //iki sensör verisinin alındığı zaman arasındaki fark
-	float delta_value = *current_value - *prev_value; //iki sensör verisi arasındaki fark
-
-	if (delta_time <= 0.0) return 0.0f; // Sıfıra bölmemek veya delta_time'dan kaynaklanan bir hatayla negatif hız değeri almamak için koruma..
-
-	return delta_value/delta_time;
-}
-
-float LowPassFilter(const float* raw, const float* prev, float lpf_coef) //Filtre fonksiyonu
-{
-	return (lpf_coef*(*raw) + (1-lpf_coef)*(*prev));
-}
-
-void UpdateSensorData(float* temp, uint32_t* press) //sensör verilerine göre değişkenleri güncelleme fonksiyonu
-{
-	*temp = BMP180_GetTemperature();
-	*press = BMP180_GetPressure();
-}
-
+extern osThreadId_t UARTDinlemeHandle;
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-char msg[128];
-
-float acceleration = 0.0f;
-float altitude = 0.0f;
-float raw_altitude = 0.0f;
-float temperature = 0.0f;
-float velocity = 0.0f;
-float previous_altitude = 0.0f;
-float previous_velocity = 0.0f;
-
-uint32_t current_time_ms = 0;
-uint32_t ground_pressure = 0;
-uint32_t pressure = 0;
-uint32_t previous_ms = 0;
-
-uint16_t counter = 0;
-
-uint8_t len = 0;
-
-rocket_status current_status = IDLE;
 
 /* USER CODE END 0 */
 
@@ -172,19 +94,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-  BMP180_Init(&hi2c1);
-  BMP180_SetOversampling(BMP180_HIGH);
-  BMP180_UpdateCalibrationData();
-
-  HAL_Delay(100); //Sensörün kalibre olması için bekliyoruz.
-  DetermineGroundPressure(&ground_pressure, 20); //Referans basıncını hesaplamak için 20 ölçümün ortalamasını alıyoruz.
 
   /* USER CODE END 2 */
 
-  /* Call init function for freertos objects (in cmsis_os2.c) */
+  /* Init scheduler */
+  osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
   MX_FREERTOS_Init();
 
   /* Start scheduler */
@@ -245,7 +163,12 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 
+    if (huart->Instance == USART1) {
+        osThreadFlagsSet(UARTDinlemeHandle, 0x0001);
+    }
+}
 /* USER CODE END 4 */
 
 /**

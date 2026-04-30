@@ -1,11 +1,5 @@
-../Core/Src/main.c:60:7:CalculateAltitude	2
-../Core/Src/main.c:68:6:DeployDrogueParachute	1
-../Core/Src/main.c:74:6:DeployMainParachute	1
-../Core/Src/main.c:80:6:DetermineGroundPressure	2
-../Core/Src/main.c:96:7:GetDerivative	2
-../Core/Src/main.c:106:7:LowPassFilter	1
-../Core/Src/main.c:111:6:UpdateSensorData	1
-../Core/Src/main.c:150:5:main	1
-../Core/Src/main.c:210:6:SystemClock_Config	3
-../Core/Src/main.c:259:6:HAL_TIM_PeriodElapsedCallback	2
-../Core/Src/main.c:277:6:Error_Handler	1
+../Core/Src/main.c:72:5:main	1
+../Core/Src/main.c:128:6:SystemClock_Config	3
+../Core/Src/main.c:166:6:HAL_UARTEx_RxEventCallback	2
+../Core/Src/main.c:182:6:HAL_TIM_PeriodElapsedCallback	2
+../Core/Src/main.c:200:6:Error_Handler	1

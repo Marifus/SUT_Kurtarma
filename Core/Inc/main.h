@@ -57,10 +57,29 @@ typedef enum {
 	IDLE,
 	BOOST,
 	BURNOUT,
+	APOGEE,
+	NOSE_DOWN,
 	DROGUE_DESCENT,
+	BELOW_DETERMINED_ALTITUDE,
 	MAIN_DESCENT,
 	LANDED
 } rocket_status;
+
+typedef struct {
+	float irtifa;
+	float basinc;
+	float ivme_x;
+	float ivme_y;
+	float ivme_z;
+	float aci_x;
+	float aci_y;
+	float aci_z;
+} Sensor_Data;
+
+typedef union {
+    float data_f32;
+    uint8_t array[4];
+} FLOAT32_UINT8_CONVERTER;
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
