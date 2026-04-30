@@ -165,7 +165,7 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 
-    if (huart->Instance == USART1) {
+    if (huart->Instance == USART2) {
         osThreadFlagsSet(UARTDinlemeHandle, 0x0001);
     }
 }

@@ -451,7 +451,7 @@ void AlgorithmSwitch(void *argument)
   for(;;)
   {
 
-	  osMutexAcquire(SensorDataMutexHandle, 0);
+	  osMutexAcquire(SensorDataMutexHandle, osWaitForever);
 
 	  switch (current_status)
 	  {
@@ -669,6 +669,8 @@ void ReceiveUARTData(void *argument)
 			  SUTDataRead(rx_buffer, rx_length, header_index);
 		  }
 	  }
+
+  HAL_UARTEx_ReceiveToIdle_DMA(&huart2, rx_buffer, sizeof(rx_buffer));
 
   /* USER CODE END ReceiveUARTData */
 }
