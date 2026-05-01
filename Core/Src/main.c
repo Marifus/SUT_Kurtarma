@@ -48,7 +48,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+extern uint16_t rx_length;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -166,6 +166,7 @@ void SystemClock_Config(void)
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 
     if (huart->Instance == USART2) {
+    	rx_length = Size;
         osThreadFlagsSet(UARTDinlemeHandle, 0x0001);
     }
 }

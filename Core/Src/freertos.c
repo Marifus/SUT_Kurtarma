@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
 #include "math.h"
+#include "string.h"
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
@@ -45,11 +46,13 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define APOGEE_ALTITUDE 8000.0
-#define DETERMINED_ALTITUDE 2000.0
-#define MAIN_DEPLOY_ALTITUDE 2000.0
+#define APOGEE_ALTITUDE 3327.0
+#define DETERMINED_ALTITUDE 2400.0
+#define MAIN_DEPLOY_ALTITUDE 2300.0
 
-#define DATA_BUFFER_SIZE 36
+#define SIT_DATA_BUFFER_SIZE 33
+#define SUT_DATA_BUFFER_SIZE 33
+#define COMMAND_BUFFER_SIZE 2
 #define BOOST_DETECTED_BIT 0
 #define BURNOUT_DETECTED_BIT 1
 #define APOGEE_DETECTED_BIT 2
@@ -81,6 +84,7 @@ float previous_euler_x = 0.0f;
 float previous_euler_y = 0.0f;
 float previous_euler_z = 0.0f;
 float previous_pressure = 0.0f;
+float velocity = 0.0f;
 
 uint8_t rx_buffer[100];
 uint16_t rx_length;
@@ -88,8 +92,6 @@ uint16_t header_index = 0;
 
 uint32_t current_time_ms = 0;
 uint32_t prev_time_ms = 0;
-
-uint32_t ground_pressure = 0;
 
 uint16_t counter = 0;
 
@@ -150,13 +152,13 @@ const osMutexAttr_t SensorDataMutex_attributes = {
 /* USER CODE BEGIN FunctionPrototypes */
 
 
-uint8_t CheckSum(uint8_t* rx_buffer, uint16_t rx_length, uint16_t header_index)
+uint8_t CheckSum(uint8_t* rx_buffer, uint16_t buffer_length, uint16_t header_index)
 {
 	uint8_t sum = 0;
 
-	if (rx_length < header_index+DATA_BUFFER_SIZE) return 0;
+	if (rx_length < header_index+buffer_length) return 0;
 
-	for(uint16_t i=header_index; i<header_index+33; i++)
+	for(uint16_t i=header_index; i<header_index+buffer_length; i++)
 	{
 		sum = (uint8_t)(sum+rx_buffer[i]);
 	}
@@ -179,24 +181,17 @@ void DeployMainParachute()
 	Task_Status_Bits = (Task_Status_Bits | (1<<MAIN_PARACHUTE_DEPLOYED_BIT));
 }
 
-float GetDerivative(const float* current_value, const uint32_t* current_time_ms, const float* prev_value, const uint32_t* prev_time_ms)
+float GetVerticalVelocity(const float current_accel, const float current_altitude, const float prev_altitude, float delta_time)
 {
-	float delta_time = (*current_time_ms - *prev_time_ms) / 1000.0f;
-	float delta_value = *current_value - *prev_value;
+	static float velocity = 0;
+	if (delta_time <= 0.0f || delta_time > 1.0f) delta_time = 0.05f;
 
-	if (delta_time <= 0.0) return 0.0f;
+	float velocity_baro = (current_altitude - prev_altitude) / delta_time;
 
-	return delta_value/delta_time;
-}
+	float alpha = 0.95f;
+	velocity = alpha * (velocity + current_accel * delta_time) + (1.0f - alpha) * velocity_baro;
 
-float GetIntegralAccel(const float* current_value, const uint32_t* current_time_ms, const uint32_t* prev_time_ms)
-{
-	static float integral = 0;
-
-	float delta_time = (*current_time_ms - *prev_time_ms) / 1000.0f;
-	integral += *current_value * delta_time;
-
-	return integral;
+	return velocity;
 }
 
 float LowPassFilter(const float* raw, const float* prev, float lpf_coef)
@@ -206,69 +201,69 @@ float LowPassFilter(const float* raw, const float* prev, float lpf_coef)
 
 void SUTDataRead(uint8_t* rx_buffer, uint16_t rx_length, uint16_t header_index)
 {
-	if(rx_length-header_index < DATA_BUFFER_SIZE) return;
+	if(rx_length < header_index+SUT_DATA_BUFFER_SIZE+3) return;
 
 	if(rx_buffer[header_index+34] == 0x0D && rx_buffer[header_index+35] == 0x0A)
 	{
-		if(CheckSum(rx_buffer, rx_length, header_index) == rx_buffer[header_index+33])
+		if(CheckSum(rx_buffer, SUT_DATA_BUFFER_SIZE, header_index) == rx_buffer[header_index+33])
 		{
 			FLOAT32_UINT8_CONVERTER converter;
 
 			osMutexAcquire(SensorDataMutexHandle, osWaitForever);
 
-			converter.array[0] = rx_buffer[header_index+1];
-			converter.array[1] = rx_buffer[header_index+2];
-			converter.array[2] = rx_buffer[header_index+3];
-			converter.array[3] = rx_buffer[header_index+4];
+			converter.array[3] = rx_buffer[header_index+1];
+			converter.array[2] = rx_buffer[header_index+2];
+			converter.array[1] = rx_buffer[header_index+3];
+			converter.array[0] = rx_buffer[header_index+4];
 
 			current_data.irtifa = converter.data_f32;
 
-			converter.array[0] = rx_buffer[header_index+5];
-			converter.array[1] = rx_buffer[header_index+6];
-			converter.array[2] = rx_buffer[header_index+7];
-			converter.array[3] = rx_buffer[header_index+8];
+			converter.array[3] = rx_buffer[header_index+5];
+			converter.array[2] = rx_buffer[header_index+6];
+			converter.array[1] = rx_buffer[header_index+7];
+			converter.array[0] = rx_buffer[header_index+8];
 
 			current_data.basinc = converter.data_f32;
 
-			converter.array[0] = rx_buffer[header_index+9];
-			converter.array[1] = rx_buffer[header_index+10];
-			converter.array[2] = rx_buffer[header_index+11];
-			converter.array[3] = rx_buffer[header_index+12];
+			converter.array[3] = rx_buffer[header_index+9];
+			converter.array[2] = rx_buffer[header_index+10];
+			converter.array[1] = rx_buffer[header_index+11];
+			converter.array[0] = rx_buffer[header_index+12];
 
 			current_data.ivme_x = converter.data_f32;
 
-			converter.array[0] = rx_buffer[header_index+13];
-			converter.array[1] = rx_buffer[header_index+14];
-			converter.array[2] = rx_buffer[header_index+15];
-			converter.array[3] = rx_buffer[header_index+16];
+			converter.array[3] = rx_buffer[header_index+13];
+			converter.array[2] = rx_buffer[header_index+14];
+			converter.array[1] = rx_buffer[header_index+15];
+			converter.array[0] = rx_buffer[header_index+16];
 
 			current_data.ivme_y = converter.data_f32;
 
-			converter.array[0] = rx_buffer[header_index+17];
-			converter.array[1] = rx_buffer[header_index+18];
-			converter.array[2] = rx_buffer[header_index+19];
-			converter.array[3] = rx_buffer[header_index+20];
+			converter.array[3] = rx_buffer[header_index+17];
+			converter.array[2] = rx_buffer[header_index+18];
+			converter.array[1] = rx_buffer[header_index+19];
+			converter.array[0] = rx_buffer[header_index+20];
 
 			current_data.ivme_z = converter.data_f32;
 
-			converter.array[0] = rx_buffer[header_index+21];
-			converter.array[1] = rx_buffer[header_index+22];
-			converter.array[2] = rx_buffer[header_index+23];
-			converter.array[3] = rx_buffer[header_index+24];
+			converter.array[3] = rx_buffer[header_index+21];
+			converter.array[2] = rx_buffer[header_index+22];
+			converter.array[1] = rx_buffer[header_index+23];
+			converter.array[0] = rx_buffer[header_index+24];
 
 			current_data.aci_x = converter.data_f32;
 
-			converter.array[0] = rx_buffer[header_index+25];
-			converter.array[1] = rx_buffer[header_index+26];
-			converter.array[2] = rx_buffer[header_index+27];
-			converter.array[3] = rx_buffer[header_index+28];
+			converter.array[3] = rx_buffer[header_index+25];
+			converter.array[2] = rx_buffer[header_index+26];
+			converter.array[1] = rx_buffer[header_index+27];
+			converter.array[0] = rx_buffer[header_index+28];
 
 			current_data.aci_y = converter.data_f32;
 
-			converter.array[0] = rx_buffer[header_index+29];
-			converter.array[1] = rx_buffer[header_index+30];
-			converter.array[2] = rx_buffer[header_index+31];
-			converter.array[3] = rx_buffer[header_index+32];
+			converter.array[3] = rx_buffer[header_index+29];
+			converter.array[2] = rx_buffer[header_index+30];
+			converter.array[1] = rx_buffer[header_index+31];
+			converter.array[0] = rx_buffer[header_index+32];
 
 			current_data.aci_z = converter.data_f32;
 
@@ -406,6 +401,7 @@ void TransferUARTData(void *argument)
 void PullSensorData(void *argument)
 {
   /* USER CODE BEGIN PullSensorData */
+	float delta_time = 0;
   /* Infinite loop */
   for(;;)
   {
@@ -414,15 +410,19 @@ void PullSensorData(void *argument)
 
 	  osMutexAcquire(SensorDataMutexHandle, osWaitForever);
 
-	  accel_x = LowPassFilter(&current_data.ivme_x, &previous_accel_x, 0.9);
-	  accel_y = LowPassFilter(&current_data.ivme_y, &previous_accel_y, 0.9);
-	  accel_z = LowPassFilter(&current_data.ivme_z, &previous_accel_z, 0.9);
-	  altitude = LowPassFilter(&current_data.irtifa, &previous_altitude, 0.9);
-	  euler_x = LowPassFilter(&current_data.aci_x, &previous_euler_x, 0.9);
-	  euler_y = LowPassFilter(&current_data.aci_y, &previous_euler_y, 0.9);
-	  euler_z = LowPassFilter(&current_data.aci_z, &previous_euler_z, 0.9);
-	  pressure = LowPassFilter(&current_data.basinc, &previous_pressure, 0.9);
+	  current_time_ms = osKernelGetTickCount();
+	  delta_time = (current_time_ms - prev_time_ms) / 1000.0f;
+	  prev_time_ms = current_time_ms;
 
+	  accel_x = LowPassFilter(&current_data.ivme_x, &previous_accel_x, 0.9f);
+	  accel_y = LowPassFilter(&current_data.ivme_y, &previous_accel_y, 0.9f);
+	  accel_z = LowPassFilter(&current_data.ivme_z, &previous_accel_z, 0.9f);
+	  altitude = LowPassFilter(&current_data.irtifa, &previous_altitude, 0.9f);
+	  euler_x = LowPassFilter(&current_data.aci_x, &previous_euler_x, 0.9f);
+	  euler_y = LowPassFilter(&current_data.aci_y, &previous_euler_y, 0.9f);
+	  euler_z = LowPassFilter(&current_data.aci_z, &previous_euler_z, 0.9f);
+	  pressure = LowPassFilter(&current_data.basinc, &previous_pressure, 0.9f);
+	  velocity = GetVerticalVelocity(accel_z, altitude, previous_altitude, delta_time);
 
 
 	  previous_accel_x = accel_x;
@@ -435,6 +435,7 @@ void PullSensorData(void *argument)
 	  previous_pressure = pressure;
 
 	  osMutexRelease(SensorDataMutexHandle);
+	  osThreadFlagsSet(AlgoritmaHandle, 0x0001);
 
   }
   /* USER CODE END PullSensorData */
@@ -454,6 +455,7 @@ void AlgorithmSwitch(void *argument)
   for(;;)
   {
 
+	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
 	  osMutexAcquire(SensorDataMutexHandle, osWaitForever);
 
 	  switch (current_status)
@@ -461,8 +463,15 @@ void AlgorithmSwitch(void *argument)
 	  	  case IDLE:
 	  		  if(altitude > 50.0f && accel_z > 1.0f)
 	  		  {
-	  			  Task_Status_Bits = (Task_Status_Bits | (1<<BOOST_DETECTED_BIT));
-	  			  current_status = BOOST;
+	  			  counter += 1;
+	  			  if (counter < 5) break;
+	  			  else
+	  			  {
+	  				  counter = 0;
+		  			  Task_Status_Bits = (Task_Status_Bits | (1<<BOOST_DETECTED_BIT));
+		  			  current_status = BOOST;
+	  			  }
+
 	  		  }
 	  		  else break;
 
@@ -505,7 +514,7 @@ void AlgorithmSwitch(void *argument)
 	  		  }
 
 	  	  case APOGEE:
-	  		  if (euler_x < -90 || euler_x > 90 || euler_y < -90 || euler_y > 90)
+	  		  if (euler_x < -50 || euler_x > 50 || euler_y < -50 || euler_y > 50)
 	  		  {
 	  			  counter += 1;
 	  			  if (counter < 5) break;
@@ -524,13 +533,14 @@ void AlgorithmSwitch(void *argument)
 	  		  }
 
 	  	  case NOSE_DOWN:
-	  		  if (previous_altitude > altitude)
+	  		  if (velocity < 0.0f)
 	  		  {
 	  			  counter += 1;
 	  			  if (counter < 5) break;
 	  			  else
 	  			  {
 	  				  counter = 0;
+	  				Task_Status_Bits = (Task_Status_Bits | (1<<EMRE_DETECTED_BIT));
 	  				  DeployDrogueParachute();
 	  				  current_status = DROGUE_DESCENT;
 	  			  }
@@ -604,7 +614,7 @@ void AlgorithmSwitch(void *argument)
 
 	  osMutexRelease(SensorDataMutexHandle);
 
-    osDelay(10);
+    osDelay(50);
   }
   /* USER CODE END AlgorithmSwitch */
 }
@@ -625,8 +635,6 @@ void ReceiveUARTData(void *argument)
   for(;;)
   {
 	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
-	  hata_kodu = 1;
-	  rx_length = sizeof(rx_buffer) - __HAL_DMA_GET_COUNTER(huart2.hdmarx);
 
 	  for (int i = 0; i<rx_length; i++)
 	  {
@@ -638,32 +646,30 @@ void ReceiveUARTData(void *argument)
 
 	  }
 
-	  header_index = 0;
-	  hata_kodu = 2;
-
-	  if (rx_length >= header_index+5 && rx_buffer[header_index] == 0xAA)
+	  if (rx_length >= header_index+COMMAND_BUFFER_SIZE+3 && rx_buffer[header_index] == 0xAA)
 	  {
-		  hata_kodu = 3;
+
 		  if (rx_buffer[header_index+3] == 0x0D && rx_buffer[header_index+4] == 0x0A)
 		  {
-			  hata_kodu = 4;
-			  if (rx_buffer[header_index+1] == 0x20 && rx_buffer[header_index+2] == 0x8C)
+
+			  if (rx_buffer[header_index+1] == 0x20 && rx_buffer[header_index+2] == CheckSum(rx_buffer, COMMAND_BUFFER_SIZE, header_index))
 			  {
 				  SIT_Task_Active = 1;
 				  SUT_Task_Active = 0;
 			  }
 
-			  else if (rx_buffer[header_index+1] == 0x22 && rx_buffer[header_index+2] == 0x8E)
+			  else if (rx_buffer[header_index+1] == 0x22 && rx_buffer[header_index+2] == CheckSum(rx_buffer, COMMAND_BUFFER_SIZE, header_index))
 			  {
 				  SIT_Task_Active = 0;
 				  SUT_Task_Active = 1;
 			  }
 
-			  else if (rx_buffer[header_index+1] == 0x24 && rx_buffer[header_index+2] == 0x90)
+			  else if (rx_buffer[header_index+1] == 0x24 && rx_buffer[header_index+2] == CheckSum(rx_buffer, COMMAND_BUFFER_SIZE, header_index))
 			  {
 				  SIT_Task_Active = 0;
 				  SUT_Task_Active = 0;
 			  }
+
 		  }
 	  }
 
