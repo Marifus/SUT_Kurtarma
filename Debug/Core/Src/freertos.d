@@ -44,7 +44,9 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
  ../Core/Inc/gpio.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h \
- ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h
+ ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h \
+ ../Core/Inc/bmp180_for_stm32_hal.h ../Core/Inc/bno055_stm32.h \
+ ../Core/Inc/i2c.h ../Core/Inc/bno055.h
 ../Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h:
 ../Core/Inc/FreeRTOSConfig.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/include/projdefs.h:
@@ -94,3 +96,7 @@ Core/Src/freertos.o: ../Core/Src/freertos.c \
 ../Middlewares/Third_Party/FreeRTOS/Source/include/semphr.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h:
 ../Middlewares/Third_Party/FreeRTOS/Source/include/task.h:
+../Core/Inc/bmp180_for_stm32_hal.h:
+../Core/Inc/bno055_stm32.h:
+../Core/Inc/i2c.h:
+../Core/Inc/bno055.h:

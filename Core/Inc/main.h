@@ -65,6 +65,12 @@ typedef enum {
 	LANDED
 } rocket_status;
 
+typedef enum {
+	OFF,
+	SETUP,
+	ACTIVE
+} sensor_status;
+
 typedef struct {
 	float irtifa;
 	float basinc;

@@ -32,6 +32,8 @@
 #include "usart.h"
 #include "gpio.h"
 #include "semphr.h"
+#include "bmp180_for_stm32_hal.h"
+#include "bno055_stm32.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -66,7 +68,14 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
+bno055_vector_t linear_accel;
+bno055_vector_t euler_raw;
+bno055_vector_t euler_ref;
+bno055_vector_t mag;
+
 char msg[256];
+
+float ground_pressure = 0.0f;
 
 float accel_x = 0.0f;
 float accel_y = 0.0f;
@@ -84,6 +93,7 @@ float previous_euler_x = 0.0f;
 float previous_euler_y = 0.0f;
 float previous_euler_z = 0.0f;
 float previous_pressure = 0.0f;
+float temperature = 0.0f;
 float velocity = 0.0f;
 
 uint8_t rx_buffer[100];
@@ -98,6 +108,9 @@ uint16_t counter = 0;
 uint8_t len = 0;
 
 rocket_status current_status = IDLE;
+
+sensor_status bmp180_status = OFF;
+sensor_status bno055_status = OFF;
 
 Sensor_Data current_data;
 
@@ -142,6 +155,20 @@ const osThreadAttr_t UARTDinleme_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for BMP180Okuma */
+osThreadId_t BMP180OkumaHandle;
+const osThreadAttr_t BMP180Okuma_attributes = {
+  .name = "BMP180Okuma",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for BNO055Okuma */
+osThreadId_t BNO055OkumaHandle;
+const osThreadAttr_t BNO055Okuma_attributes = {
+  .name = "BNO055Okuma",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for SensorDataMutex */
 osMutexId_t SensorDataMutexHandle;
 const osMutexAttr_t SensorDataMutex_attributes = {
@@ -151,6 +178,26 @@ const osMutexAttr_t SensorDataMutex_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
+float CalculateGroundPressure(uint16_t delay, uint16_t sample)
+{
+	float sum = 0.0f;
+
+	for(int i=0; i<sample; i++)
+	{
+		sum += BMP180_GetPressure();
+		osDelay(delay);
+	}
+
+	return sum/sample/100.0f;
+}
+
+float CalculateAltitude(float press, float ground_press, float temp)
+{
+	if(press == 0) return 0;
+
+	float alt = (powf((ground_press / press), 0.190263f) - 1.0f) * (temp + 273.15f) / 0.0065f;
+	return alt;
+}
 
 uint8_t CheckSum(uint8_t* rx_buffer, uint16_t buffer_length, uint16_t header_index)
 {
@@ -179,6 +226,18 @@ void DeployMainParachute()
 	//İkinci paraşütü açan fonksiyon
 	HAL_GPIO_WritePin(MAIN_PARACHUTE_GPIO_Port, MAIN_PARACHUTE_Pin, 1);
 	Task_Status_Bits = (Task_Status_Bits | (1<<MAIN_PARACHUTE_DEPLOYED_BIT));
+}
+
+void FloatToArray(float data, uint8_t* arr)
+{
+	FLOAT32_UINT8_CONVERTER converter;
+
+	converter.data_f32 = data;
+
+	for (int i=0; i<4; i++)
+	{
+		*(arr+i) = converter.array[3-i];
+	}
 }
 
 float GetVerticalVelocity(const float current_accel, const float current_altitude, const float prev_altitude, float delta_time)
@@ -280,6 +339,8 @@ void TransferUARTData(void *argument);
 void PullSensorData(void *argument);
 void AlgorithmSwitch(void *argument);
 void ReceiveUARTData(void *argument);
+void BMP180Read(void *argument);
+void BNO055Read(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -328,6 +389,12 @@ void MX_FREERTOS_Init(void) {
   /* creation of UARTDinleme */
   UARTDinlemeHandle = osThreadNew(ReceiveUARTData, NULL, &UARTDinleme_attributes);
 
+  /* creation of BMP180Okuma */
+  BMP180OkumaHandle = osThreadNew(BMP180Read, NULL, &BMP180Okuma_attributes);
+
+  /* creation of BNO055Okuma */
+  BNO055OkumaHandle = osThreadNew(BNO055Read, NULL, &BNO055Okuma_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -365,10 +432,10 @@ void StartDefaultTask(void *argument)
 /* USER CODE END Header_TransferUARTData */
 void TransferUARTData(void *argument)
 {
-	uint32_t next_tick = osKernelGetTickCount();
-	uint8_t tx_buffer[6];
-
   /* USER CODE BEGIN TransferUARTData */
+	uint32_t next_tick = osKernelGetTickCount();
+	uint8_t tx_buffer[50];
+
   /* Infinite loop */
   for(;;)
   {
@@ -384,6 +451,26 @@ void TransferUARTData(void *argument)
 		  tx_buffer[5] = 0x0A;
 
 		  HAL_UART_Transmit_DMA(&huart2, tx_buffer, 6);
+	  }
+
+	  if(SIT_Task_Active && bmp180_status == ACTIVE && bno055_status == ACTIVE)
+	  {
+		  tx_buffer[0] = 0xAB;
+
+		  FloatToArray(altitude, &tx_buffer[1]);
+		  FloatToArray(pressure, &tx_buffer[5]);
+		  FloatToArray(accel_x, &tx_buffer[9]);
+		  FloatToArray(accel_y, &tx_buffer[13]);
+		  FloatToArray(accel_z, &tx_buffer[17]);
+		  FloatToArray(euler_x, &tx_buffer[21]);
+		  FloatToArray(euler_y, &tx_buffer[25]);
+		  FloatToArray(euler_z, &tx_buffer[29]);
+
+		  tx_buffer[33] = CheckSum(tx_buffer, SIT_DATA_BUFFER_SIZE, 0);
+		  tx_buffer[34] = 0x0D;
+		  tx_buffer[35] = 0x0A;
+
+		  HAL_UART_Transmit_DMA(&huart2, tx_buffer, SIT_DATA_BUFFER_SIZE+3);
 	  }
 
     osDelayUntil(next_tick);
@@ -656,24 +743,32 @@ void ReceiveUARTData(void *argument)
 			  {
 				  SIT_Task_Active = 1;
 				  SUT_Task_Active = 0;
+				  bno055_status = SETUP;
+				  bmp180_status = SETUP;
 			  }
 
 			  else if (rx_buffer[header_index+1] == 0x22 && rx_buffer[header_index+2] == CheckSum(rx_buffer, COMMAND_BUFFER_SIZE, header_index))
 			  {
 				  SIT_Task_Active = 0;
 				  SUT_Task_Active = 1;
+				  current_status = IDLE;
+				  Task_Status_Bits = 0x00;
+				  bno055_status = OFF;
+				  bmp180_status = OFF;
 			  }
 
 			  else if (rx_buffer[header_index+1] == 0x24 && rx_buffer[header_index+2] == CheckSum(rx_buffer, COMMAND_BUFFER_SIZE, header_index))
 			  {
 				  SIT_Task_Active = 0;
 				  SUT_Task_Active = 0;
+				  bno055_status = OFF;
+				  bmp180_status = OFF;
 			  }
 
 		  }
 	  }
 
-	  else if ((SUT_Task_Active == 1) && rx_buffer[header_index] == 0xAB)
+	  if ((SUT_Task_Active == 1) && rx_buffer[header_index] == 0xAB)
 	  {
 		  SUTDataRead(rx_buffer, rx_length, header_index);
 	  }
@@ -684,6 +779,104 @@ void ReceiveUARTData(void *argument)
 
 
   /* USER CODE END ReceiveUARTData */
+}
+
+/* USER CODE BEGIN Header_BMP180Read */
+/**
+* @brief Function implementing the BMP180Okuma thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_BMP180Read */
+void BMP180Read(void *argument)
+{
+  /* USER CODE BEGIN BMP180Read */
+	BMP180_Init(&hi2c1);
+	BMP180_SetOversampling(BMP180_ULTRA);
+	BMP180_UpdateCalibrationData();
+	ground_pressure = CalculateGroundPressure(26,5);
+  /* Infinite loop */
+  for(;;)
+  {
+	  if (bmp180_status == SETUP)
+	  {
+		  previous_pressure = ground_pressure;
+		  bmp180_status = ACTIVE;
+	  }
+
+	  if (bmp180_status == ACTIVE)
+	  {
+		  osMutexAcquire(SensorDataMutexHandle, osWaitForever);
+
+		  current_data.basinc = BMP180_GetPressure() / 100.0f;
+		  pressure = LowPassFilter(&current_data.basinc, &previous_pressure, 0.9);
+		  temperature = BMP180_GetTemperature();
+		  current_data.irtifa = CalculateAltitude(pressure, 1013.25f, temperature);
+		  altitude = current_data.irtifa;
+
+		  osMutexRelease(SensorDataMutexHandle);
+		  osThreadFlagsSet(AlgoritmaHandle, 0x0001);
+	  }
+
+    osDelay(26);
+  }
+  /* USER CODE END BMP180Read */
+}
+
+/* USER CODE BEGIN Header_BNO055Read */
+/**
+* @brief Function implementing the BNO055Okuma thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_BNO055Read */
+void BNO055Read(void *argument)
+{
+  /* USER CODE BEGIN BNO055Read */
+	bno055_assignI2C(&hi2c2);
+	bno055_setup();
+	bno055_setOperationModeNDOF();
+	osDelay(300);
+  /* Infinite loop */
+  for(;;)
+  {
+	if (bno055_status == SETUP)
+	{
+		euler_ref = bno055_getVectorEuler();
+		bno055_status = ACTIVE;
+	}
+
+	if (bno055_status == ACTIVE)
+	{
+		osMutexAcquire(SensorDataMutexHandle, osWaitForever);
+
+		linear_accel = bno055_getVectorLinearAccel();
+		euler_raw = bno055_getVectorEuler();
+		mag = bno055_getVectorMagnetometer();
+
+		accel_x = linear_accel.x;
+		accel_y = linear_accel.y;
+		accel_z = linear_accel.z;
+
+		euler_x = euler_raw.x - euler_ref.x;
+		euler_y = euler_raw.y - euler_ref.y;
+		euler_z = euler_raw.z - euler_ref.z;
+
+		current_data.aci_x = euler_x;
+		current_data.aci_y = euler_y;
+		current_data.aci_z = euler_z;
+
+		current_data.ivme_x = accel_x;
+		current_data.ivme_y = accel_y;
+		current_data.ivme_z = accel_z;
+
+		osMutexRelease(SensorDataMutexHandle);
+		osThreadFlagsSet(AlgoritmaHandle, 0x0001);
+	}
+
+    osDelay(10);
+  }
+  /* USER CODE END BNO055Read */
 }
 
 /* Private application code --------------------------------------------------*/
